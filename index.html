@@ -10,20 +10,49 @@
       font-family: Arial, "Microsoft JhengHei", sans-serif;
       margin: 20px;
       background: #f5f5f5;
-      scroll-behavior: smooth; /* 基本平滑滾動 */
+      color: #111;
+      scroll-behavior: smooth;
     }
     h1 {
       margin-bottom: 0;
     }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     .subtitle {
       font-size: 0.9em;
       color: #555;
-      margin-bottom: 10px;
+      margin-bottom: 4px;
     }
-    #updateTime {
-      margin-top: 8px;
+    #updateTime, #deviceStatus, #modeInfo {
       font-size: 0.85em;
       color: #666;
+      margin-top: 2px;
+    }
+    #deviceStatus {
+      font-weight: bold;
+    }
+    #deviceStatus.online { color: #008800; }
+    #deviceStatus.offline { color: #b30000; }
+
+    /* 作物模式 + 深色模式按鈕列 */
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .controls select, .controls button {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.9em;
     }
 
     /* 卡片列 */
@@ -62,15 +91,9 @@
     }
 
     /* 狀態顏色 */
-    .status-bad {
-      color: #b30000;
-    }
-    .status-ok {
-      color: #996600;
-    }
-    .status-good {
-      color: #006600;
-    }
+    .status-bad  { color: #b30000; }
+    .status-ok   { color: #996600; }
+    .status-good { color: #006600; }
 
     /* 圖表區 */
     .charts {
@@ -94,20 +117,62 @@
       color: #555;
       margin-bottom: 10px;
     }
+    .chart-stats {
+      margin-top: 6px;
+      font-size: 0.85em;
+      color: #444;
+    }
 
     @media (max-width: 768px) {
-      body {
-        margin: 10px;
-      }
+      body { margin: 10px; }
+    }
+
+    /* 深色模式 */
+    body.dark {
+      background: #111;
+      color: #eee;
+    }
+    body.dark h1 { color: #fafafa; }
+    body.dark .subtitle { color: #bbb; }
+    body.dark #updateTime, body.dark #modeInfo { color: #aaa; }
+    body.dark .card {
+      background: #1f1f1f;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    body.dark .chart-box {
+      background: #1f1f1f;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    body.dark .controls select,
+    body.dark .controls button {
+      background: #222;
+      color: #eee;
+      border-color: #555;
     }
   </style>
 </head>
 <body>
-  <h1>SmartAgri-Box 全監控儀表板</h1>
-  <div class="subtitle">
-    資料來源：ThingSpeak Channel 3159969（Temp / Humi / Lux / Soil / SoilT）
+  <div class="top-bar">
+    <div>
+      <h1>SmartAgri-Box 全監控儀表板</h1>
+      <div class="subtitle">資料來源：ThingSpeak Channel 3159969（Temp / Humi / Lux / Soil / SoilT）</div>
+      <div id="updateTime">最後更新時間：讀取中...</div>
+      <div id="deviceStatus">裝置狀態：檢查中...</div>
+      <div id="modeInfo">目前模式：一般環境（室內監控）</div>
+    </div>
+    <div class="controls">
+      <label>
+        作物模式：
+        <select id="modeSelect" onchange="changeMode()">
+          <option value="general">一般環境</option>
+          <option value="lettuce">生菜模式</option>
+          <option value="tomato">番茄模式</option>
+          <option value="succulent">多肉模式</option>
+        </select>
+      </label>
+      <button id="darkToggle" onclick="toggleDarkMode()">🌙 深色模式</button>
+    </div>
   </div>
-  <div id="updateTime">最後更新時間：讀取中...</div>
 
   <!-- 上方卡片：點擊會捲到對應圖表 -->
   <div class="cards">
@@ -148,20 +213,23 @@
       <div class="chart-title">環境溫濕度</div>
       <div class="chart-subtitle">溫度（°C）＋ 濕度（%）隨時間變化</div>
       <canvas id="chartEnv"></canvas>
+      <div class="chart-stats" id="stats-env">統計：--</div>
     </div>
 
     <div class="chart-box" id="section-lux">
       <div class="chart-title">光照強度 Lux</div>
       <div class="chart-subtitle">
-        含 200 / 500 lux 門檻線（室內：200 以下太暗、200–500 一般、500 以上明亮）
+        含目前模式門檻線（例如：一般環境 200 / 500 lux；模式不同門檻不同）
       </div>
       <canvas id="chartLux"></canvas>
+      <div class="chart-stats" id="stats-lux">統計：--</div>
     </div>
 
     <div class="chart-box" id="section-soil">
       <div class="chart-title">土壤狀態</div>
       <div class="chart-subtitle">土壤濕度（%）＋ 土壤溫度（°C）</div>
       <canvas id="chartSoil"></canvas>
+      <div class="chart-stats" id="stats-soil">統計：--</div>
     </div>
   </div>
 
@@ -170,21 +238,53 @@
     const CHANNEL_ID = 3159969;
     const READ_API_KEY = "H0GEHP6Z8PPMTF2X";  // 你的 Read API Key
     const RESULTS = 100;  // 取最近 100 筆資料
+    const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=${RESULTS}&api_key=${READ_API_KEY}`;
 
-    // 室內環境建議區間（你之後可以自己微調）
+    // 室內環境建議區間（固定）
     const TEMP_LOW  = 15;
     const TEMP_HIGH = 30;
-
     const HUMI_LOW  = 40;
     const HUMI_HIGH = 70;
 
-    const LUX_LOW   = 200; // 太暗
-    const LUX_HIGH  = 500; // 明亮
+    // 作物模式門檻（Lux、土壤濕度）
+    // 數值是「室內栽培縮小版」，不是實際戶外太陽的十萬 lux 等級，不然永遠顯示太暗 XD
+    const cropModes = {
+      general: {
+        label: "一般環境（室內監控）",
+        luxLow: 200,
+        luxHigh: 500,
+        soilDry: 30,
+        soilWet: 70
+      },
+      lettuce: {
+        label: "生菜模式（需要中等光、偏濕）",
+        luxLow: 300,
+        luxHigh: 800,
+        soilDry: 40,
+        soilWet: 75
+      },
+      tomato: {
+        label: "番茄模式（需要較亮、稍微濕）",
+        luxLow: 500,
+        luxHigh: 1000,
+        soilDry: 50,
+        soilWet: 80
+      },
+      succulent: {
+        label: "多肉模式（光強、偏乾）",
+        luxLow: 600,
+        luxHigh: 1200,
+        soilDry: 25,
+        soilWet: 55
+      }
+    };
 
-    const SOIL_DRY  = 30;  // 土壤 <30% 偏乾
-    const SOIL_WET  = 70;  // 土壤 >70% 偏濕
-
-    const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=${RESULTS}&api_key=${READ_API_KEY}`;
+    // 目前使用的門檻（會根據模式更新）
+    let currentModeKey = "general";
+    let luxLow   = cropModes.general.luxLow;
+    let luxHigh  = cropModes.general.luxHigh;
+    let soilDry  = cropModes.general.soilDry;
+    let soilWet  = cropModes.general.soilWet;
 
     let chartEnv = null;
     let chartLux = null;
@@ -197,6 +297,35 @@
       target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
+    // ===== 深色模式切換 =====
+    function toggleDarkMode() {
+      const body = document.body;
+      const btn = document.getElementById("darkToggle");
+      const isDark = body.classList.toggle("dark");
+      btn.textContent = isDark ? "☀️ 亮色模式" : "🌙 深色模式";
+    }
+
+    // ===== 作物模式切換 =====
+    function changeMode() {
+      const sel = document.getElementById("modeSelect");
+      currentModeKey = sel.value;
+      const mode = cropModes[currentModeKey] || cropModes.general;
+
+      luxLow  = mode.luxLow;
+      luxHigh = mode.luxHigh;
+      soilDry = mode.soilDry;
+      soilWet = mode.soilWet;
+
+      document.getElementById("modeInfo").textContent =
+        `目前模式：${mode.label}（Lux門檻：${luxLow} ~ ${luxHigh}，土壤濕度門檻：${soilDry}% ~ ${soilWet}%）`;
+
+      // 模式變了，下次更新時會套用新門檻，可強迫重畫一次（不重新抓資料）
+      if (lastProcessedData) {
+        drawCharts(lastProcessedData);
+        updateCards(lastLatestValues);
+      }
+    }
+
     // ===== 工具：時間格式化 =====
     function formatTime(isoString) {
       const t = new Date(isoString);
@@ -206,7 +335,7 @@
     }
 
     // ===== 更新上方卡片 =====
-    function setCard(idV, idS, value, low, high, unit, labelWhenNaN="無資料") {
+    function setCard(idV, idS, value, low, high, unit, labelWhenNaN = "無資料") {
       const V = document.getElementById(idV);
       const S = document.getElementById(idS);
       if (!V || !S) return;
@@ -232,12 +361,75 @@
         S.textContent = "狀態：偏高";
         S.classList.add("status-ok");
       } else {
-        S.textContent = "狀態：正常";
+        S.textContent = "狀態：適中";
         S.classList.add("status-good");
       }
     }
 
-    // ===== 繪圖 =====
+    // Lux & 土壤的狀態文字稍微客製化
+    function updateCards(latest) {
+      // 溫度
+      setCard("val-temp", "status-temp", latest.temp, TEMP_LOW, TEMP_HIGH, "°C");
+
+      // 濕度
+      setCard("val-humi", "status-humi", latest.humi, HUMI_LOW, HUMI_HIGH, "%");
+
+      // Lux（依模式）
+      const V_l = document.getElementById("val-lux");
+      const S_l = document.getElementById("status-lux");
+      S_l.className = "card-status";
+      if (isNaN(latest.lux)) {
+        V_l.textContent = "-- lux";
+        S_l.textContent = "狀態：無資料";
+      } else {
+        V_l.textContent = `${latest.lux.toFixed(0)} lux`;
+        if (latest.lux < luxLow) {
+          S_l.textContent = "狀態：光線偏弱";
+          S_l.classList.add("status-bad");
+        } else if (latest.lux > luxHigh) {
+          S_l.textContent = "狀態：光線偏強";
+          S_l.classList.add("status-ok");
+        } else {
+          S_l.textContent = "狀態：光線適中";
+          S_l.classList.add("status-good");
+        }
+      }
+
+      // 土壤濕度（依模式）
+      const V_s = document.getElementById("val-soil");
+      const S_s = document.getElementById("status-soil");
+      S_s.className = "card-status";
+      if (isNaN(latest.soil)) {
+        V_s.textContent = "-- %";
+        S_s.textContent = "狀態：無資料";
+      } else {
+        V_s.textContent = `${latest.soil.toFixed(0)} %`;
+        if (latest.soil < soilDry) {
+          S_s.textContent = "狀態：土壤偏乾";
+          S_s.classList.add("status-bad");
+        } else if (latest.soil > soilWet) {
+          S_s.textContent = "狀態：土壤偏濕";
+          S_s.classList.add("status-ok");
+        } else {
+          S_s.textContent = "狀態：土壤適中";
+          S_s.classList.add("status-good");
+        }
+      }
+
+      // 土壤溫度（先給寬鬆範圍）
+      setCard("val-soilT", "status-soilT", latest.soilT, 10, 40, "°C");
+    }
+
+    // ===== 繪圖 + 區間統計 =====
+    function calcMinMax(arr) {
+      const valid = arr.filter(v => !isNaN(v));
+      if (valid.length === 0) return { min: NaN, max: NaN };
+      return {
+        min: Math.min(...valid),
+        max: Math.max(...valid)
+      };
+    }
+
     function drawCharts(processed) {
       const { labels, temps, humis, luxs, soils, soilTs } = processed;
 
@@ -290,7 +482,14 @@
         }
       });
 
-      // 圖 2：Lux + 門檻線
+      // 圖 1 統計
+      const tStat = calcMinMax(temps);
+      const hStat = calcMinMax(humis);
+      document.getElementById("stats-env").textContent =
+        `目前區間：溫度 ${isNaN(tStat.min) ? "--" : tStat.min.toFixed(1)} ~ ${isNaN(tStat.max) ? "--" : tStat.max.toFixed(1)} °C，` +
+        `濕度 ${isNaN(hStat.min) ? "--" : hStat.min.toFixed(0)} ~ ${isNaN(hStat.max) ? "--" : hStat.max.toFixed(0)} %`;
+
+      // 圖 2：Lux + 門檻線（依模式）
       const ctxLux = document.getElementById('chartLux').getContext('2d');
       chartLux = new Chart(ctxLux, {
         type: 'line',
@@ -305,15 +504,15 @@
               borderWidth: 2
             },
             {
-              label: '下限 200 lux',
-              data: luxs.map(() => LUX_LOW),
+              label: `下限 ${luxLow} lux`,
+              data: luxs.map(() => luxLow),
               borderDash: [5, 3],
               borderWidth: 1,
               pointRadius: 0
             },
             {
-              label: '上限 500 lux',
-              data: luxs.map(() => LUX_HIGH),
+              label: `上限 ${luxHigh} lux`,
+              data: luxs.map(() => luxHigh),
               borderDash: [5, 3],
               borderWidth: 1,
               pointRadius: 0
@@ -333,6 +532,14 @@
           }
         }
       });
+
+      const lxStat = calcMinMax(luxs);
+      document.getElementById("stats-lux").textContent =
+        `目前區間：Lux ${isNaN(lxStat.min) ? "--" : lxStat.min.toFixed(0)} ~ ${isNaN(lxStat.max) ? "--" : lxStat.max.toFixed(0)}，` +
+        `目前模式門檻：${luxLow} ~ ${luxHigh} lux`;
+
+      // 因為 Chart.js 配色在深色模式下沒有自動變色，如果想要很講究，
+      // 可以再針對 ticks 的 color 做客製化，這裡先保持預設。
 
       // 圖 3：土壤
       const ctxSoil = document.getElementById('chartSoil').getContext('2d');
@@ -377,7 +584,18 @@
           }
         }
       });
+
+      const sStat = calcMinMax(soils);
+      const stStat = calcMinMax(soilTs);
+      document.getElementById("stats-soil").textContent =
+        `目前區間：土壤濕度 ${isNaN(sStat.min) ? "--" : sStat.min.toFixed(0)} ~ ${isNaN(sStat.max) ? "--" : sStat.max.toFixed(0)} %，` +
+        `土壤溫度 ${isNaN(stStat.min) ? "--" : stStat.min.toFixed(1)} ~ ${isNaN(stStat.max) ? "--" : stStat.max.toFixed(1)} °C；` +
+        `模式門檻：濕度 ${soilDry}% ~ ${soilWet}%`;
     }
+
+    // 讓模式切換時可以重畫用
+    let lastProcessedData = null;
+    let lastLatestValues = null;
 
     // ===== 抓資料 + 更新畫面 =====
     function fetchAndUpdate() {
@@ -388,6 +606,8 @@
           if (!feeds.length) {
             document.getElementById('updateTime').textContent =
               "最後更新時間：尚無資料";
+            document.getElementById('deviceStatus').textContent =
+              "裝置狀態：尚無資料";
             return;
           }
 
@@ -416,26 +636,40 @@
             soilT:parseFloat(last.field5)
           };
 
+          lastProcessedData = { labels, temps, humis, luxs, soils, soilTs };
+          lastLatestValues = latest;
+
           // 更新時間顯示
-          const t = new Date(last.created_at);
+          const lastDate = new Date(last.created_at);
           document.getElementById('updateTime').textContent =
-            `最後更新時間：${t.toLocaleString()}`;
+            `最後更新時間：${lastDate.toLocaleString()}`;
+
+          // 裝置在線/離線判斷（> 2 分鐘沒更新就當可能離線）
+          const now = new Date();
+          const diffMin = (now - lastDate) / 60000;
+          const dev = document.getElementById("deviceStatus");
+          dev.className = "";
+          if (diffMin <= 2) {
+            dev.textContent = "裝置狀態：在線（資料更新正常）";
+            dev.classList.add("online");
+          } else {
+            dev.textContent = `裝置狀態：可能離線（已超過 ${diffMin.toFixed(1)} 分鐘無更新）`;
+            dev.classList.add("offline");
+          }
 
           // 更新卡片
-          setCard("val-temp", "status-temp", latest.temp, TEMP_LOW, TEMP_HIGH, "°C");
-          setCard("val-humi", "status-humi", latest.humi, HUMI_LOW, HUMI_HIGH, "%");
-          setCard("val-lux",  "status-lux",  latest.lux,  LUX_LOW,  LUX_HIGH,  "lux");
-          setCard("val-soil", "status-soil", latest.soil, SOIL_DRY, SOIL_WET, "%");
-          // 土壤溫度先給一個大概區間 10~40
-          setCard("val-soilT","status-soilT",latest.soilT,10,40,"°C");
+          updateCards(latest);
 
-          // 畫圖
-          drawCharts({ labels, temps, humis, luxs, soils, soilTs });
+          // 畫圖 & 統計
+          drawCharts(lastProcessedData);
         })
         .catch(err => {
           console.error(err);
           document.getElementById('updateTime').textContent =
             "資料讀取失敗，請確認 Channel ID / Read API Key 是否正確";
+          const dev = document.getElementById("deviceStatus");
+          dev.textContent = "裝置狀態：讀取失敗";
+          dev.className = "offline";
         });
     }
 
