@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
-  <title>Smart Agri-Box 全監控儀表板</title>
+  <title>SmartAgri-Box 全監控儀表板</title>
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -154,7 +154,7 @@
 <body>
   <div class="top-bar">
     <div>
-      <h1>Smart Agri-Box 全監控儀表板</h1>
+      <h1>SmartAgri-Box 全監控儀表板</h1>
       <div class="subtitle">資料來源：ThingSpeak Channel 3159969（Temp / Humi / Lux / Soil / SoilT）</div>
       <div id="updateTime">最後更新時間：讀取中...</div>
       <div id="deviceStatus">裝置狀態：檢查中...</div>
@@ -240,14 +240,13 @@
     const RESULTS = 100;  // 取最近 100 筆資料
     const url = `https://api.thingspeak.com/channels/${CHANNEL_ID}/feeds.json?results=${RESULTS}&api_key=${READ_API_KEY}`;
 
-    // 室內環境建議區間（固定）
+    // 室內環境建議區間
     const TEMP_LOW  = 15;
     const TEMP_HIGH = 30;
     const HUMI_LOW  = 40;
     const HUMI_HIGH = 70;
 
-    // 作物模式門檻（Lux、土壤濕度）
-    // 數值是「室內栽培縮小版」，不是實際戶外太陽的十萬 lux 等級，不然永遠顯示太暗 XD
+    // 作物模式門檻
     const cropModes = {
       general: {
         label: "一般環境（室內監控）",
@@ -279,7 +278,6 @@
       }
     };
 
-    // 目前使用的門檻（會根據模式更新）
     let currentModeKey = "general";
     let luxLow   = cropModes.general.luxLow;
     let luxHigh  = cropModes.general.luxHigh;
@@ -319,19 +317,21 @@
       document.getElementById("modeInfo").textContent =
         `目前模式：${mode.label}（Lux門檻：${luxLow} ~ ${luxHigh}，土壤濕度門檻：${soilDry}% ~ ${soilWet}%）`;
 
-      // 模式變了，下次更新時會套用新門檻，可強迫重畫一次（不重新抓資料）
       if (lastProcessedData) {
         drawCharts(lastProcessedData);
         updateCards(lastLatestValues);
       }
     }
 
-    // ===== 工具：時間格式化 =====
+    // ===== 工具：時間格式化（完整日期＋時間） =====
     function formatTime(isoString) {
       const t = new Date(isoString);
+      const yy = t.getFullYear();
+      const MM = (t.getMonth() + 1).toString().padStart(2, '0');
+      const dd = t.getDate().toString().padStart(2, '0');
       const hh = t.getHours().toString().padStart(2, '0');
       const mm = t.getMinutes().toString().padStart(2, '0');
-      return `${hh}:${mm}`;
+      return `${yy}-${MM}-${dd} ${hh}:${mm}`;
     }
 
     // ===== 更新上方卡片 =====
@@ -366,11 +366,9 @@
       }
     }
 
-    // Lux & 土壤的狀態文字稍微客製化
     function updateCards(latest) {
       // 溫度
       setCard("val-temp", "status-temp", latest.temp, TEMP_LOW, TEMP_HIGH, "°C");
-
       // 濕度
       setCard("val-humi", "status-humi", latest.humi, HUMI_LOW, HUMI_HIGH, "%");
 
@@ -402,7 +400,7 @@
       if (isNaN(latest.soil)) {
         V_s.textContent = "-- %";
         S_s.textContent = "狀態：無資料";
-      } else {
+        } else {
         V_s.textContent = `${latest.soil.toFixed(0)} %`;
         if (latest.soil < soilDry) {
           S_s.textContent = "狀態：土壤偏乾";
@@ -416,7 +414,7 @@
         }
       }
 
-      // 土壤溫度（先給寬鬆範圍）
+      // 土壤溫度
       setCard("val-soilT", "status-soilT", latest.soilT, 10, 40, "°C");
     }
 
@@ -433,7 +431,6 @@
     function drawCharts(processed) {
       const { labels, temps, humis, luxs, soils, soilTs } = processed;
 
-      // 有舊圖先銷毀
       if (chartEnv) chartEnv.destroy();
       if (chartLux) chartLux.destroy();
       if (chartSoil) chartSoil.destroy();
@@ -476,20 +473,25 @@
               grid: { drawOnChartArea: false }
             },
             x: {
-              title: { display: true, text: '時間' }
+              title: { display: true, text: '時間（日期＋時間）' },
+              ticks: {
+                maxRotation: 90,
+                minRotation: 45,
+                autoSkip: true,
+                autoSkipPadding: 10
+              }
             }
           }
         }
       });
 
-      // 圖 1 統計
       const tStat = calcMinMax(temps);
       const hStat = calcMinMax(humis);
       document.getElementById("stats-env").textContent =
         `目前區間：溫度 ${isNaN(tStat.min) ? "--" : tStat.min.toFixed(1)} ~ ${isNaN(tStat.max) ? "--" : tStat.max.toFixed(1)} °C，` +
         `濕度 ${isNaN(hStat.min) ? "--" : hStat.min.toFixed(0)} ~ ${isNaN(hStat.max) ? "--" : hStat.max.toFixed(0)} %`;
 
-      // 圖 2：Lux + 門檻線（依模式）
+      // 圖 2：Lux + 門檻線
       const ctxLux = document.getElementById('chartLux').getContext('2d');
       chartLux = new Chart(ctxLux, {
         type: 'line',
@@ -527,7 +529,13 @@
               title: { display: true, text: 'Lux' }
             },
             x: {
-              title: { display: true, text: '時間' }
+              title: { display: true, text: '時間（日期＋時間）' },
+              ticks: {
+                maxRotation: 90,
+                minRotation: 45,
+                autoSkip: true,
+                autoSkipPadding: 10
+              }
             }
           }
         }
@@ -537,9 +545,6 @@
       document.getElementById("stats-lux").textContent =
         `目前區間：Lux ${isNaN(lxStat.min) ? "--" : lxStat.min.toFixed(0)} ~ ${isNaN(lxStat.max) ? "--" : lxStat.max.toFixed(0)}，` +
         `目前模式門檻：${luxLow} ~ ${luxHigh} lux`;
-
-      // 因為 Chart.js 配色在深色模式下沒有自動變色，如果想要很講究，
-      // 可以再針對 ticks 的 color 做客製化，這裡先保持預設。
 
       // 圖 3：土壤
       const ctxSoil = document.getElementById('chartSoil').getContext('2d');
@@ -579,7 +584,13 @@
               grid: { drawOnChartArea: false }
             },
             x: {
-              title: { display: true, text: '時間' }
+              title: { display: true, text: '時間（日期＋時間）' },
+              ticks: {
+                maxRotation: 90,
+                minRotation: 45,
+                autoSkip: true,
+                autoSkipPadding: 10
+              }
             }
           }
         }
@@ -593,7 +604,6 @@
         `模式門檻：濕度 ${soilDry}% ~ ${soilWet}%`;
     }
 
-    // 讓模式切換時可以重畫用
     let lastProcessedData = null;
     let lastLatestValues = null;
 
@@ -639,12 +649,10 @@
           lastProcessedData = { labels, temps, humis, luxs, soils, soilTs };
           lastLatestValues = latest;
 
-          // 更新時間顯示
           const lastDate = new Date(last.created_at);
           document.getElementById('updateTime').textContent =
             `最後更新時間：${lastDate.toLocaleString()}`;
 
-          // 裝置在線/離線判斷（> 2 分鐘沒更新就當可能離線）
           const now = new Date();
           const diffMin = (now - lastDate) / 60000;
           const dev = document.getElementById("deviceStatus");
@@ -657,10 +665,7 @@
             dev.classList.add("offline");
           }
 
-          // 更新卡片
           updateCards(latest);
-
-          // 畫圖 & 統計
           drawCharts(lastProcessedData);
         })
         .catch(err => {
@@ -673,9 +678,7 @@
         });
     }
 
-    // 初始化
     fetchAndUpdate();
-    // 每 30 秒更新一次
     setInterval(fetchAndUpdate, 30000);
   </script>
 </body>
